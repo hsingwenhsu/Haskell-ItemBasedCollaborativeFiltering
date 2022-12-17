@@ -1,0 +1,28 @@
+Compute Item Similarity: 0.906224s
+movie-rec-par-exe: <<loop>>
+   1,112,449,280 bytes allocated in the heap
+   1,955,564,656 bytes copied during GC
+     376,777,336 bytes maximum residency (10 sample(s))
+       3,384,712 bytes maximum slop
+             745 MiB total memory in use (0 MB lost due to fragmentation)
+
+                                     Tot time (elapsed)  Avg pause  Max pause
+  Gen  0       238 colls,   238 par    1.199s   1.214s     0.0051s    0.0131s
+  Gen  1        10 colls,     9 par    1.191s   0.430s     0.0430s    0.1853s
+
+  Parallel GC work balance: 40.68% (serial 0%, perfect 100%)
+
+  TASKS: 10 (1 bound, 9 peak workers (9 total), using -N4)
+
+  SPARKS: 1413721 (700988 converted, 712733 overflowed, 0 dud, 0 GC'd, 0 fizzled)
+
+  INIT    time    0.001s  (  0.006s elapsed)
+  MUT     time    0.357s  (  0.540s elapsed)
+  GC      time    2.390s  (  1.644s elapsed)
+  EXIT    time    0.000s  (  0.006s elapsed)
+  Total   time    2.747s  (  2.196s elapsed)
+
+  Alloc rate    3,118,532,863 bytes per MUT second
+
+  Productivity  13.0% of total user, 24.6% of total elapsed
+
