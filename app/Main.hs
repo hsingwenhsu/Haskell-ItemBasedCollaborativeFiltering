@@ -60,7 +60,7 @@ main = do
     putStrLn $ "Compute Item Similarity: " ++ (show (diffUTCTime endTime startTime))
     
     let itemSimilarityMap0 = createItemSimilarityMap itemNum
-    let itemSimilarityMap = setItemSimilarityMap itemSimilarityMap itemSimTuples
+    let itemSimilarityMap = setItemSimilarityMap itemSimilarityMap0 itemSimTuples
 
     -- recommend items for users
     startTime2 <- itemSimilarityMap `seq` getCurrentTime
