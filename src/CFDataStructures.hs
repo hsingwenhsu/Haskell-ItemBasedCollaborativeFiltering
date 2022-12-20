@@ -3,6 +3,7 @@ module CFDataStructures (
     UserId,
     ItemId,
     ItemRating,
+    UserRating,
     Similarity,
     ItemSimHeap,
     SimilarityMap,
@@ -18,6 +19,7 @@ type Rating = Double
 type UserId = Int
 type ItemId = Int
 type ItemRating = Vector Rating
+type UserRating = Vector Rating 
 type Similarity = Double
 type ItemSimHeap = Heap.MaxPrioHeap Similarity ItemId
 type SimilarityMap = Map.Map ItemId ItemSimHeap

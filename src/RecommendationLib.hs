@@ -13,6 +13,7 @@ import Data.Matrix
 import Data.Vector
 
 import CFDataStructures
+import CFLib
 
 getRatingItemPairsByUser :: Matrix Rating -> UserId -> [(Rating, ItemId)]
 getRatingItemPairsByUser ratingMatrix userId = Vector.toList $ fmap (id) ratedItemsMaybe
