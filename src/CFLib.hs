@@ -1,17 +1,17 @@
 module CFLib (
     getItemPairs,
-    getSimTuples,
-    getSimTuplesStatic,
-    getSimTuplesPar1,
-    getSimTuplesPar2,
-    -- getItemSimilarityMap,
-    -- getItemSimilarityMapPar,
+    getSimTuples0,
+    getSimTuples1,
+    getSimTuples2,
     createItemSimilarityMap,
     setItemSimilarityMap,
-    getPredictedRatingsByUser,
-    getTopKRecommendationsForUserSeq,
-    getTopKRecommendationsForUserPar1,
-    getTopKRecommendationsForUserPar2,
+    getPredictedRatings0,
+    getPredictedRatings1,
+    getPredictedRatings2,
+    filterRatingItemPairs,
+    getTopK,
+    sort0,
+    sort1,
     getRMSE
 ) where
 import Control.Parallel.Strategies
@@ -20,6 +20,7 @@ import Control.DeepSeq
 import qualified Data.Heap as Heap
 import qualified Data.Map as Map
 import qualified Data.Vector as Vector
+import Data.List
 import Data.Matrix
 
 import CFDataStructures
@@ -32,13 +33,6 @@ getItemPairs itemNum = [(i, j) | i <- [1..itemNum], j <- [(i + 1)..itemNum]]
 getSimTuple :: Matrix Rating -> (ItemId, ItemId) -> (ItemId, ItemId, Similarity)
 getSimTuple mc (itemId1, itemId2) = (itemId1, itemId2, getCosSimilarity mc itemId1 itemId2)
 
-getSimTuples :: Matrix Rating -> [(ItemId, ItemId)] -> [(ItemId, ItemId, Similarity)]
-getSimTuples _ [] = []
-getSimTuples mc x = map f x
-  where f :: (ItemId, ItemId) -> (ItemId, ItemId, Similarity)
-        f (itemId1, itemId2) = (itemId1, itemId2, getCosSimilarity mc itemId1 itemId2)
-
--- Static partitioning
 getSimTuplesStatic :: Matrix Rating -> [(ItemId, ItemId)] -> [(ItemId, ItemId, Similarity)]
 getSimTuplesStatic _ [] = []
 getSimTuplesStatic mc x = runEval $ do
@@ -49,31 +43,19 @@ getSimTuplesStatic mc x = runEval $ do
     _ <- rseq bs'
     return (as' ++ bs')
 
-getSimTuplesPar1 :: Matrix Rating -> [(ItemId, ItemId)] -> [(ItemId, ItemId, Similarity)]
-getSimTuplesPar1 _ [] = []
-getSimTuplesPar1 mc x = map (getSimTuple mc) x `using` parList rseq
+getSimTuples0 :: Matrix Rating -> [(ItemId, ItemId)] -> [(ItemId, ItemId, Similarity)]
+getSimTuples0 _ [] = []
+getSimTuples0 mc x = map f x
+  where f :: (ItemId, ItemId) -> (ItemId, ItemId, Similarity)
+        f (itemId1, itemId2) = (itemId1, itemId2, getCosSimilarity mc itemId1 itemId2)
 
-getSimTuplesPar2 :: Matrix Rating -> [(ItemId, ItemId)] -> Int -> [(ItemId, ItemId, Similarity)]
-getSimTuplesPar2 _ [] _ = []
-getSimTuplesPar2 mc x chunkSize = map(getSimTuple mc) x `using` parListChunk chunkSize rseq
+getSimTuples1 :: Matrix Rating -> [(ItemId, ItemId)] -> [(ItemId, ItemId, Similarity)]
+getSimTuples1 _ [] = []
+getSimTuples1 mc x = map (getSimTuple mc) x `using` parList rseq
 
--- Sequentially compute itemSimilarity Map
--- getItemSimilarityMap :: Matrix Rating -> Int -> Map.Map ItemId (Heap.MaxPrioHeap Similarity ItemId)
--- getItemSimilarityMap mc itemNum = itemSimilarityMap
---     where 
---         itemIdPairs        = getItemPairs itemNum
---         ijSimTuples        = getSimTuples mc itemIdPairs
---         itemSimilarityMap0 = createItemSimilarityMap itemNum
---         itemSimilarityMap  = setItemSimilarityMap itemSimilarityMap0 ijSimTuples
-
--- getItemSimilarityMapPar :: Matrix Rating -> Int -> Map.Map ItemId (Heap.MaxPrioHeap Similarity ItemId)
--- getItemSimilarityMapPar mc itemNum = itemSimilarityMap
---     where
---         itemIdPairs        = getItemPairs itemNum
---         ijSimTuples        = getSimTuplesPar mc itemIdPairs
---         itemSimilarityMap0 = createItemSimilarityMap itemNum
---         itemSimilarityMap  = setItemSimilarityMap itemSimilarityMap0 ijSimTuples
-
+getSimTuples2 :: Matrix Rating -> [(ItemId, ItemId)] -> Int -> [(ItemId, ItemId, Similarity)]
+getSimTuples2 _ [] _ = []
+getSimTuples2 mc x chunkSize = map(getSimTuple mc) x `using` parListChunk chunkSize rseq
 
 setItemSimilarityMap :: Map.Map ItemId (Heap.MaxPrioHeap Similarity ItemId)
     -> [(ItemId, ItemId, Similarity)]
@@ -99,13 +81,11 @@ setItemSimilarityMap sm ((itemId1, itemId2, sim):xs) = do
                 Nothing -> setItemSimilarityMap sm xs
 
 -- ## Helper functions for getItemSimilarityMap *** 
--- * createItemHeapList itemNum itemId_i -> [(itemId_i, Similarity heap for item i)]
 createItemHeapList :: Int -> ItemId -> [(ItemId, Heap.MaxPrioHeap Similarity ItemId)]
 createItemHeapList 0 _ = []
 createItemHeapList itemNum itemId
     = (itemId, Heap.fromList [] :: Heap.MaxPrioHeap Similarity ItemId) : createItemHeapList (itemNum - 1) (itemId + 1)
 
--- * createItemSimilarityMap
 createItemSimilarityMap :: Int -> Map.Map ItemId (Heap.MaxPrioHeap Similarity ItemId)
 createItemSimilarityMap 0 = Map.fromList [] :: SimilarityMap
 createItemSimilarityMap itemNum = Map.fromList $ createItemHeapList itemNum 1
@@ -143,6 +123,97 @@ predictRatingHelper ratingMatrix ((sim, itemJ):xs) userId k numer deno
     | otherwise = predictRatingHelper ratingMatrix xs userId (k - 1) (numer + rUJ * sim) (deno + sim)
         where rUJ = getElem itemJ userId ratingMatrix
 
+getPredictedRatings0 :: Matrix Rating -- seq
+    -> Map.Map ItemId (Heap.MaxPrioHeap Similarity ItemId)
+    -> UserId
+    -> UserRating
+    -> [ItemId] -- [1..1682]
+    -> Int -- k
+    -> [Rating]
+getPredictedRatings0 _ _ _ _ [] _ = []
+getPredictedRatings0 ratingMatrix itemSimMap userId userRating itemIds k
+     = force (map (predictRating ratingMatrix itemSimMap userId k) itemIds)
+
+getPredictedRatings1 :: Matrix Rating -- seq
+    -> Map.Map ItemId (Heap.MaxPrioHeap Similarity ItemId)
+    -> UserId
+    -> UserRating
+    -> [ItemId] -- [1..1682]
+    -> Int -- k
+    -> [Rating]
+getPredictedRatings1 _ _ _ _ [] _ = []
+getPredictedRatings1 ratingMatrix itemSimMap userId userRating itemIds k
+     = force(map (predictRating ratingMatrix itemSimMap userId k) itemIds `using` parList rdeepseq)
+
+getPredictedRatings2 :: Matrix Rating -- seq
+    -> Map.Map ItemId (Heap.MaxPrioHeap Similarity ItemId)
+    -> UserId
+    -> UserRating
+    -> [ItemId] -- [1..1682]
+    -> Int -- k
+    -> Int -- chunkSize
+    -> [Rating]
+
+getPredictedRatings2 _ _ _ _ [] _ _ = []
+getPredictedRatings2 ratingMatrix itemSimMap userId userRating itemIds k chunkSize
+     = force(map (predictRating ratingMatrix itemSimMap userId k) itemIds `using` parListChunk chunkSize rdeepseq)
+
+filterRatingItemPairs :: [(Rating, ItemId)] -> UserRating -> [ItemId]
+filterRatingItemPairs [] _ = []
+filterRatingItemPairs ((_, id):xs) userRating
+    | userRating Vector.! (id - 1) == 0 = id : filterRatingItemPairs xs userRating
+    | otherwise = filterRatingItemPairs xs userRating
+
+getTopK :: [ItemId] -> Int -> [ItemId]
+getTopK itemList k
+    | length itemList < k = error "Not enough unrated items"
+    | otherwise = take k itemList
+
+-- getTopKRecommendationsForUserSeq :: [(Rating, ItemId)] -> Int -> [ItemId]
+-- getTopKRecommendationsForUserSeq ratingItemPairs k 
+--     | length ratingItemPairs < k = error "Not enough unrated items"
+--     | otherwise = take k topItems
+--         where sortedRating = sortBy (\(a, _) (b, _) -> compare b a) ratingItemPairs
+--               topItems = map (snd) sortedRating
+
+-- getTopKRecommendationsForUserPar1 :: [(Rating, ItemId)] -> Int -> [ItemId]
+-- getTopKRecommendationsForUserPar1 ratingItemPairs k 
+--     | length ratingItemPairs < k = error "Not enough unrated items"
+--     | otherwise = take k topItems
+--         where sortedRating = sortBy (\(a, _) (b, _) -> compare b a) ratingItemPairs
+--               topItems = getTopItems1 sortedRating
+
+getTopItems1 :: [(Rating, ItemId)] -> [ItemId]
+getTopItems1 sortedRatingList = map (snd) sortedRatingList `using` parList rseq
+
+-- getTopKRecommendationsForUserPar2 :: [(Rating, ItemId)] -> Int -> Int -> [ItemId]
+-- getTopKRecommendationsForUserPar2 ratingItemPairs k chunkSize
+--     | length ratingItemPairs < k = error "Not enough unrated items"
+--     | otherwise = take k topItems
+--         where sortedRating = sortBy (\(a, _) (b, _) -> compare b a) ratingItemPairs
+--               topItems = getTopItems2 sortedRating chunkSize
+
+getTopItems2 :: [(Rating, ItemId)] -> Int -> [ItemId]
+getTopItems2 sortedRatingList chunkSize = map (snd) sortedRatingList `using` parListChunk chunkSize rseq
+
+sort0 :: [(Rating, ItemId)] -> [(Rating, ItemId)]
+sort0 [] = []
+sort0 ratingItemPairs = sortBy (\(a, _) (b, _) -> compare b a) ratingItemPairs
+
+sort1 :: [(Rating, ItemId)] -> [(Rating, ItemId)]
+sort1 [] = []
+sort1 ((rating, id):xs) = a' ++ [(rating, id)] ++ b'
+    where (a', b') = quickSortHelper rating xs
+
+quickSortHelper :: Rating -> [(Rating, ItemId)] -> ([(Rating, ItemId)], [(Rating, ItemId)])
+quickSortHelper rating xs = runEval $ do 
+    let (a, b) = partition ((>rating).fst) xs 
+    a' <- rpar (force sort1 a)
+    b' <- rpar (force sort1 b)
+    _ <- rseq a'
+    _ <- rseq b'
+    return (a', b')
+
 getRMSE :: Matrix Rating
     -> Map.Map ItemId (Heap.MaxPrioHeap Similarity ItemId)
     -> [RatingEntry]
@@ -162,44 +233,3 @@ getRMSE ratingMatrix itemSimMap (r:rs) k s c =
             rPredict = predictRating ratingMatrix itemSimMap userId k itemId
             s' = s + (rPredict - rActual) * (rPredict - rActual)
             c' = c + 1::Double  
-
-
-getPredictedRatingsByUser :: Matrix Rating
-    -> Map.Map ItemId (Heap.MaxPrioHeap Similarity ItemId)
-    -> UserId
-    -> UserRating
-    -> [Int] -- [1..1682]
-    -> Int -- k
-    -> [(Rating, ItemId)]
-getPredictedRatingsByUser _ _ _ _ [] _ = []
-getPredictedRatingsByUser ratingMatrix itemSimMap userId userRating (i:is) k
-    | (userRating Vector.! (i-1)) == 0 = (predicted, i) : (getPredictedRatingsByUser ratingMatrix itemSimMap userId userRating is k)
-    | otherwise = getPredictedRatingsByUser ratingMatrix itemSimMap userId userRating is k
-        where predicted = predictRating ratingMatrix itemSimMap userId k i
-
-getTopKRecommendationsForUserSeq :: [(Rating, ItemId)] -> Int -> [ItemId]
-getTopKRecommendationsForUserSeq ratingItemPairs k 
-    | length ratingItemPairs < k = error "Not enough unrated items"
-    | otherwise = take k topItems
-        where sortedRating = Heap.fromList ratingItemPairs :: Heap.MaxPrioHeap Rating ItemId
-              topItems = map (snd) (Heap.toAscList sortedRating)
-
-getTopKRecommendationsForUserPar1 :: [(Rating, ItemId)] -> Int -> [ItemId]
-getTopKRecommendationsForUserPar1 ratingItemPairs k 
-    | length ratingItemPairs < k = error "Not enough unrated items"
-    | otherwise = take k topItems
-        where sortedRating = Heap.fromList ratingItemPairs :: Heap.MaxPrioHeap Rating ItemId
-              topItems = getTopItems1 (Heap.toAscList sortedRating)
-
-getTopItems1 :: [(Rating, ItemId)] -> [ItemId]
-getTopItems1 sortedRatingList = map (snd) sortedRatingList `using` parList rseq
-
-getTopKRecommendationsForUserPar2 :: [(Rating, ItemId)] -> Int -> Int -> [ItemId]
-getTopKRecommendationsForUserPar2 ratingItemPairs k chunkSize
-    | length ratingItemPairs < k = error "Not enough unrated items"
-    | otherwise = take k topItems
-        where sortedRating = Heap.fromList ratingItemPairs :: Heap.MaxPrioHeap Rating ItemId
-              topItems = getTopItems2 (Heap.toAscList sortedRating) chunkSize
-
-getTopItems2 :: [(Rating, ItemId)] -> Int -> [ItemId]
-getTopItems2 sortedRatingList chunkSize = map (snd) sortedRatingList `using` parListChunk chunkSize rseq

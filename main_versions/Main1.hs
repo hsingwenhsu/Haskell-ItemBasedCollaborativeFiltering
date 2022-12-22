@@ -17,10 +17,10 @@ import IOUtils
 
 import CFLib (
     getItemPairs,
-    getSimTuples2,
+    getSimTuples1,
     createItemSimilarityMap,
     setItemSimilarityMap,
-    getPredictedRatings2,
+    getPredictedRatings1,
     filterRatingItemPairs,
     sort1,
     getTopK,
@@ -32,22 +32,20 @@ import CFDataStructures
 main :: IO ()
 main = do
     args <- getArgs
-    (userIdString, recKString, predictKString, chunkSizeString) <- case args of 
-        [userIdString, recKString, predictKString, chunkSizeString] -> return (userIdString, recKString, predictKString, chunkSizeString)
+    (userIdString, recKString, predictKString) <- case args of 
+        [userIdString, recKString, predictKString] -> return (userIdString, recKString, predictKString)
         _ -> do pn <- getProgName
-                die $ "Usage: " ++ pn ++ " <userid> <rec-num> <predict-num> <chunksize>"
+                die $ "Usage: " ++ pn ++ " <userid> <rec-num> <predict-num>"
 
     let matrixPath = "matrix_files/"
     let dataName = "u.data"
     let filenameOri = matrixPath ++ "original/" ++ dataName
     let filenameMc = matrixPath ++ "mc/" ++ dataName
 
+    let itemNum = 1682 :: Int
     let k = read predictKString :: Int -- the number of items that we used to predict the rating
     let queryUserId = read userIdString :: UserId
     let topK = read recKString :: Int -- the number of items that we want to recommend to the user
-    let chunkSize = read chunkSizeString :: Int 
-
-    let itemNum = 1682 :: Int
     let allItems = force([(1::ItemId)..1682])
     -- read raw data
     ratingMatrixData <- readMatrixData filenameOri
@@ -61,14 +59,14 @@ main = do
     -- compute item similarity map
     let itemSimPairs = getItemPairs itemNum
     time1 <- itemSimPairs `seq` getCurrentTime
-    let itemSimTuples = getSimTuples2 meanCentered itemSimPairs chunkSize
+    let itemSimTuples = getSimTuples1 meanCentered itemSimPairs
     time2 <- itemSimTuples `seq` getCurrentTime
     
     let itemSimilarityMap0 = createItemSimilarityMap itemNum
     let itemSimilarityMap = setItemSimilarityMap itemSimilarityMap0 itemSimTuples
     time3 <- itemSimilarityMap `seq` getCurrentTime
     
-    let predictedRatings = getPredictedRatings2 ratingMatrix itemSimilarityMap queryUserId userRating allItems k chunkSize
+    let predictedRatings = getPredictedRatings1 ratingMatrix itemSimilarityMap queryUserId userRating allItems k
     let predictedRatingItemPairs = zipWith (,) predictedRatings allItems
     time4 <- predictedRatingItemPairs `seq` getCurrentTime
     

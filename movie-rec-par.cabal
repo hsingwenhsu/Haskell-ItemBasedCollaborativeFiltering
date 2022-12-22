@@ -28,8 +28,6 @@ library
       CFDataStructures
       CFLib
       IOUtils
-      Lib
-      RecommendationLib
       SimilarityLib
   other-modules:
       Paths_movie_rec_par
